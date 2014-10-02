@@ -40,11 +40,6 @@ module Adyen
       # The Adyen Payment SOAP service endpoint uri.
       ENDPOINT_URI = 'https://pal-%s.adyen.com/pal/servlet/soap/Payment'
 
-      # @see API.generate_billet
-      def generate_billet
-        make_payment_request(generate_billet_request_body, BilletResponse)
-      end
-
       # @see API.authorise_payment
       def authorise_payment
         make_payment_request(authorise_payment_request_body, AuthorisationResponse)
@@ -103,9 +98,9 @@ module Adyen
 
       def authorise_one_click_payment_request_body
         validate_parameters!(:recurring_detail_reference,
-                             :shopper => [:email, :reference])
-        content = one_click_card_partial
-        content << ONE_CLICK_PAYMENT_BODY_PARTIAL % [@params[:recurring_detail_reference]]
+                             :shopper => [:email, :reference],
+                             :card    => [:cvc])
+        content = ONE_CLICK_PAYMENT_BODY_PARTIAL % [@params[:recurring_detail_reference], @params[:card][:cvc]]
         payment_request_body(content)
       end
 
@@ -115,16 +110,6 @@ module Adyen
         content << installments_partial if @params[:installments]
         content << shopper_partial if @params[:shopper]
         content << fraud_offset_partial if @params[:fraud_offset]
-        LAYOUT % [@params[:merchant_account], @params[:reference], content]
-      end
-
-      def generate_billet_request_body
-        validate_parameters!(:merchant_account, :reference, :amount => [:currency, :value])
-        content  =  amount_partial
-        content << social_security_number_partial if @params[:social_security_number]
-        content << shopper_name_partial if @params[:shopper_name]
-        content << delivery_date_partial if @params[:delivery_date]
-        content << selected_brand_partial if @params[:selected_brand]
         LAYOUT % [@params[:merchant_account], @params[:reference], content]
       end
 
@@ -155,22 +140,8 @@ module Adyen
         AMOUNT_PARTIAL % @params[:amount].values_at(:currency, :value)
       end
 
-      def one_click_card_partial
-        if @params[:card] && @params[:card][:encrypted] && @params[:card][:encrypted][:json]
-          ENCRYPTED_CARD_PARTIAL % [@params[:card][:encrypted][:json]]
-        else
-          validate_parameters!(:card => [:cvc])
-          card  = @params[:card].values_at(:cvc)
-          ONE_CLICK_CARD_PARTIAL % card
-        end
-      end
-
-      def shopper_name_partial
-        SHOPPER_NAME_PARTIAL % @params[:shopper_name].values_at(:first_name, :last_name)
-      end
-
       def card_partial
-        if @params[:card] && @params[:card][:encrypted] && @params[:card][:encrypted][:json]
+        if @params[:card] and @params[:card][:encrypted] and @params[:card][:encrypted][:json]
           ENCRYPTED_CARD_PARTIAL % [@params[:card][:encrypted][:json]]
         else
           validate_parameters!(:card => [:holder_name, :number, :cvc, :expiry_year, :expiry_month])
@@ -181,26 +152,8 @@ module Adyen
       end
 
       def installments_partial
-        if @params[:installments] && @params[:installments][:value]
+        if @params[:installments] and @params[:installments][:value]
           INSTALLMENTS_PARTIAL % @params[:installments].values_at(:value)
-        end
-      end
-
-      def social_security_number_partial
-        if @params[:social_security_number]
-          SOCIAL_SECURITY_NUMBER_PARTIAL % @params[:social_security_number]
-        end
-      end
-
-      def selected_brand_partial
-        if @params[:selected_brand]
-          SELECTED_BRAND_PARTIAL % @params[:selected_brand]
-        end
-      end
-
-      def delivery_date_partial
-        if @params[:delivery_date]
-          DELIVERY_DATE_PARTIAL % @params[:delivery_date]
         end
       end
 
@@ -211,30 +164,6 @@ module Adyen
       def fraud_offset_partial
         validate_parameters!(:fraud_offset)
         FRAUD_OFFSET_PARTIAL % @params[:fraud_offset]
-      end
-
-      class BilletResponse < Response
-        RECEIVED = "Received"
-
-        response_attrs :result_code, :billet_url, :psp_reference
-
-        def success?
-          super && params[:result_code] == RECEIVED
-        end
-
-        def params
-          @params ||= xml_querier.xpath('//payment:authoriseResponse/payment:paymentResult') do |result|
-            {
-              :psp_reference  => result.text('./payment:pspReference'),
-              :result_code    => result_code = result.text('./payment:resultCode'),
-              :billet_url     => (result_code == RECEIVED) ? result.children[0].children[0].children[1].text : ""
-            }
-          end
-        end
-
-        def invalid_request?
-          !fault_message.nil?
-        end
       end
 
       class AuthorisationResponse < Response
