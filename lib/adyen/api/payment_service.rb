@@ -107,6 +107,7 @@ module Adyen
       def payment_request_body(content)
         validate_parameters!(:merchant_account, :reference, :amount => [:currency, :value])
         content << amount_partial
+        content << installments_partial if @params[:installments]
         content << shopper_partial if @params[:shopper]
         content << fraud_offset_partial if @params[:fraud_offset]
         LAYOUT % [@params[:merchant_account], @params[:reference], content]
@@ -150,15 +151,21 @@ module Adyen
         end
       end
 
+      def installments_partial
+        if @params[:installments] and @params[:installments][:value]
+          INSTALLMENTS_PARTIAL % @params[:installments].values_at(:value)
+        end
+      end
+
       def shopper_partial
         @params[:shopper].map { |k, v| SHOPPER_PARTIALS[k] % v }.join("\n")
       end
-      
+
       def fraud_offset_partial
         validate_parameters!(:fraud_offset)
         FRAUD_OFFSET_PARTIAL % @params[:fraud_offset]
       end
-        
+
       class AuthorisationResponse < Response
         ERRORS = {
           "validation 101 Invalid card number"                           => [:number,       'is not a valid creditcard number'],
@@ -171,7 +178,8 @@ module Adyen
         AUTHORISED = 'Authorised'
         REFUSED    = 'Refused'
 
-        response_attrs :result_code, :auth_code, :refusal_reason, :psp_reference
+        response_attrs :result_code, :auth_code, :refusal_reason, :psp_reference,
+          :additional_data
 
         def success?
           super && params[:result_code] == AUTHORISED
@@ -217,10 +225,28 @@ module Adyen
               :psp_reference  => result.text('./payment:pspReference'),
               :result_code    => result.text('./payment:resultCode'),
               :auth_code      => result.text('./payment:authCode'),
+              :additional_data => parse_additional_data(result.xpath('.//payment:additionalData')),
               :refusal_reason => (invalid_request? ? fault_message : result.text('./payment:refusalReason'))
             }
           end
         end
+
+        private
+          def parse_additional_data(xpath)
+            if xpath.empty?
+              {}
+            else
+              results = {}
+
+              xpath.map do |node|
+                key = node.text('./payment:entry/payment:key')
+                value = node.text('./payment:entry/payment:value')
+                results[key] = value unless key.empty?
+              end
+
+              results
+            end
+          end
       end
 
       class ModificationResponse < Response
