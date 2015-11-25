@@ -13,13 +13,17 @@ module Adyen
   def self.configuration
     @configuration ||= Adyen::Configuration.new
   end
+
+  def self.configuration=(configuration)
+    @configuration = configuration
+  end
 end
 
 require 'adyen/version'
 require 'adyen/configuration'
-require 'adyen/encoding'
-require 'adyen/formatter'
+require 'adyen/util'
 require 'adyen/form'
 require 'adyen/api'
+require 'adyen/rest'
 
 require 'adyen/railtie' if defined?(::Rails) && ::Rails::VERSION::MAJOR >= 3

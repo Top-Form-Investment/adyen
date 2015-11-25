@@ -12,26 +12,26 @@ if File.exist?(API_SPEC_INITIALIZER)
       require API_SPEC_INITIALIZER
       Net::HTTP.stubbing_enabled = false
       @order_id = @user_id = Time.now.to_i
-      perform_payment_request
+      @payment_response = perform_payment_request
     end
 
     after :all do
       Net::HTTP.stubbing_enabled = true
     end
 
-    def perform_payment_request
-      @payment_response = Adyen::API.authorise_payment(
-        @order_id,
-        { :currency => 'EUR', :value => '1234' },
-        { :email => "#{@user_id}@example.com", :reference => @user_id },
-        { :expiry_month => 12, :expiry_year => 2012, :holder_name => "Simon #{@user_id} Hopper", :number => '4444333322221111', :cvc => '737' },
-        true
-      )
-    end
-
     it "performs a payment request" do
       @payment_response.should be_authorized
       @payment_response.psp_reference.should_not be_empty
+    end
+
+    def perform_payment_request
+      Adyen::API.authorise_payment(
+        @order_id,
+        { :currency => 'EUR', :value => '1234' },
+        { :email => "#{@user_id}@example.com", :reference => @user_id },
+        { :expiry_month => '08', :expiry_year => '2018', :holder_name => "Simon #{@user_id} Hopper", :number => '4111111111111111', :cvc => '737' },
+        true
+      )
     end
 
     it "performs a recurring payment request" do
@@ -50,30 +50,36 @@ if File.exist?(API_SPEC_INITIALIZER)
         @order_id,
         { :currency => 'EUR', :value => '1234' },
         { :email => "#{@user_id}@example.com", :reference => @user_id },
-        '737',
+        { :cvc => '737' },
         detail
       )
       response.should be_authorized
       response.psp_reference.should_not be_empty
     end
 
-    # TODO disabled for now: https://github.com/wvanbergen/adyen/issues/29
-    #it "stores the provided ELV account details" do
-      #response = Adyen::API.store_recurring_token(
-        #{ :email => "#{@user_id}@example.com", :reference => @user_id },
-        #{ :bank_location => "Berlin", :bank_name => "TestBank", :bank_location_id => "12345678", :holder_name => "Simon #{@user_id} Hopper", :number => "1234567890" }
-      #)
-      #response.should be_stored
-      #response.recurring_detail_reference.should_not be_empty
-    #end
-    #it "stores the provided creditcard details" do
-      #response = Adyen::API.store_recurring_token(
-        #{ :email => "#{@user_id}@example.com", :reference => @user_id },
-        #{ :expiry_month => 12, :expiry_year => 2012, :holder_name => "Simon #{@user_id} Hopper", :number => '4111111111111111' }
-      #)
-      #response.should be_stored
-      #response.recurring_detail_reference.should_not be_empty
-    #end
+    it "stores the provided ELV account details" do
+      response = Adyen::API.store_recurring_token(
+        { :email => "#{@user_id}@example.com", :reference => @user_id },
+        { :bank_location => "Berlin", :bank_name => "TestBank", :bank_location_id => "12345678", :holder_name => "Simon #{@user_id} Hopper", :number => "1234567890" }
+      )
+      response.should be_stored
+      response.recurring_detail_reference.should_not be_empty
+    end
+
+    it "stores the provided creditcard details" do
+      response = Adyen::API.store_recurring_token(
+        { :email => "#{@user_id}@example.com", :reference => @user_id },
+        { :expiry_month => '08', :expiry_year => '2018', :holder_name => "Simon #{@user_id} Hopper", :number => '4111111111111111' }
+      )
+      response.should be_stored
+      response.recurring_detail_reference.should_not be_empty
+    end
+
+    it "disables a recurring contract" do
+      response = Adyen::API.disable_recurring_contract(@user_id)
+      response.should be_success
+      response.should be_disabled
+    end
 
     it "captures a payment" do
       response = Adyen::API.capture_payment(@payment_response.psp_reference, { :currency => 'EUR', :value => '1234' })
@@ -95,10 +101,14 @@ if File.exist?(API_SPEC_INITIALIZER)
       response.should be_success
     end
 
-    it "disables a recurring contract" do
-      response = Adyen::API.disable_recurring_contract(@user_id)
+    it "generates a billet" do
+      response = Adyen::API.generate_billet("{\"user_id\":66722,\"order_id\":6863}#signup",
+                                            { currency: "BRL", value: 1000 },
+                                            { first_name: "Jow", last_name: "Silver" },
+                                            "19762003691",
+                                            "boletobancario_santander",
+                                            "2014-07-16T18:16:11Z")
       response.should be_success
-      response.should be_disabled
     end
   end
 

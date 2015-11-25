@@ -30,8 +30,8 @@ module Adyen
   #     config.adyen.default_api_params = { :merchant_account => 'MerchantAccount' }
   #
   # Note that you'll need an Adyen notification PSP reference for some of the calls. Because of
-  # this, store all notifications that Adyen sends to you. Moreover, the responses to these calls 
-  # do *not* tell you whether or not the requested action was successful. For this you will also 
+  # this, store all notifications that Adyen sends to you. Moreover, the responses to these calls
+  # do *not* tell you whether or not the requested action was successful. For this you will also
   # have to check the notification.
   #
   # = Authorising payments
@@ -49,6 +49,63 @@ module Adyen
   # @see http://usa.visa.com/merchants/risk_management/cisp_merchants.html
   module API
     extend self
+
+    # Generate a Billet - *Brazian users only*
+    #
+    # Billet (Boleto Bancário), often simply referred to as Boleto, is an
+    # offline payment method used in Brazil . The consumer will take the Boleto form to
+    # an ATM, bank, an approved facility, or access their online banking system
+    # to complete the payment. Once the Boleto is paid, the bank will send Adyen
+    # a file confirming that the payment was made, this usually takes one day, but
+    # it may occur up to 6 days after the payment. If a Boleto is not paid, the
+    # transaction will expire once the expirationDate is reached. For more
+    # information check the Adyen API Manual - 7 - Boleto Bancário(page 30)
+    #
+    # @example
+    #   response = Adyen::API.generate_billet(
+    #     invoice.id
+    #     { currency: "BRL", value: (invoice.amount).to_i },
+    #     { first_name: "Simon", last_name: "Hopper" },
+    #     document_number,
+    #     selected_brand
+    #   )
+    #   response.success? # => true
+    #
+    #
+    # @param          [Numeric,String] reference        Your reference (ID) for this payment.
+    # @param          [Hash]           amount           A hash describing the money to charge.
+    # @param          [Hash]           shopper          A hash describing the shopper.
+    # @param          [String]         document_number  Social Security
+    # number(CPF in Brazil)
+    # @param          [String]         selected_brand   Billet brand
+    #
+    # @option amount  [String]         :currency      The ISO currency code (EUR, GBP, USD, etc).
+    # @option amount  [Integer]        :value         The value of the payment in discrete cents,
+    #                                                 unless the currency does not have cents.
+    #
+    # @option shopper_name [String]    :first_name    The shopper’s first name
+    # @option shopper_name [String]    :last_name     The shopper’s last name
+    #
+    #
+    # @return [PaymentService::BilletResponse] The response object which holds the billet url.
+    #
+    def generate_billet(reference, amount, shopper_name, social_security_number, selected_brand, delivery_date)
+      params = { :reference              => reference,
+                 :amount                 => amount,
+                 :shopper_name           => shopper_name,
+                 :social_security_number => social_security_number,
+                 :selected_brand         => selected_brand,
+                 :delivery_date          => delivery_date }
+      PaymentService.new(params).generate_billet
+    end
+
+    # Make an instant payment.
+    #
+    # Technically - authorisation with immediate (no delay) capture.
+    # @see authorise_payment
+    def pay_instantly(reference, amount, shopper, card, enable_recurring_contract = false, fraud_offset = nil)
+      authorise_payment(reference, amount, shopper, card, enable_recurring_contract, fraud_offset, true)
+    end
 
     # Authorise a payment.
     #
@@ -96,13 +153,14 @@ module Adyen
     #
     # @return [PaymentService::AuthorisationResponse] The response object which holds the
     #                                                 authorisation status.
-    def authorise_payment(reference, amount, shopper, card, enable_recurring_contract = false, fraud_offset = nil)
+    def authorise_payment(reference, amount, shopper, card, enable_recurring_contract = false, fraud_offset = nil, instant_capture = false)
       params = { :reference    => reference,
                  :amount       => amount,
                  :shopper      => shopper,
                  :card         => card,
                  :recurring    => enable_recurring_contract,
-                 :fraud_offset => fraud_offset }
+                 :fraud_offset => fraud_offset,
+                 :instant_capture => instant_capture }
       PaymentService.new(params).authorise_payment
     end
 
@@ -143,12 +201,13 @@ module Adyen
     #
     # @return [PaymentService::AuthorisationResponse] The response object which holds the
     #                                                 authorisation status.
-    def authorise_recurring_payment(reference, amount, shopper, recurring_detail_reference = 'LATEST', fraud_offset = nil)
+    def authorise_recurring_payment(reference, amount, shopper, recurring_detail_reference = 'LATEST', fraud_offset = nil, instant_capture = false)
       params = { :reference => reference,
                  :amount    => amount,
                  :shopper   => shopper,
                  :recurring_detail_reference => recurring_detail_reference,
-                 :fraud_offset => fraud_offset }
+                 :fraud_offset => fraud_offset,
+                 :instant_capture => instant_capture }
       PaymentService.new(params).authorise_recurring_payment
     end
 
@@ -165,7 +224,7 @@ module Adyen
     #     invoice.id,
     #     { :currency => 'EUR', :value => invoice.amount },
     #     { :reference => user.id, :email => user.email, :ip => '8.8.8.8', :statement => 'invoice number 123456' },
-    #     '737',
+    #     { :cvc => '737' }
     #     detail
     #   )
     #   payment.authorised? # => true
@@ -173,7 +232,7 @@ module Adyen
     # @param          [Numeric,String] reference      Your reference (ID) for this payment.
     # @param          [Hash]           amount         A hash describing the money to charge.
     # @param          [Hash]           shopper        A hash describing the shopper.
-    # @param          [String]         card_cvc       The card’s verification code.
+    # @param          [Hash]           card           A hash describing the credit card details.
     #
     # @option amount  [String]         :currency      The ISO currency code (EUR, GBP, USD, etc).
     # @option amount  [Integer]        :value         The value of the payment in discrete cents,
@@ -184,6 +243,8 @@ module Adyen
     # @option shopper [String]         :ip            The shopper’s IP address.
     # @option shopper [String]         :statement     The shopper's statement
     #
+    # @option card    [String]         :cvc           The card’s verification code.
+    #
     # @param [String] recurring_detail_reference      The recurring contract reference to use.
     # @see list_recurring_details
     #
@@ -192,13 +253,14 @@ module Adyen
     #
     # @return [PaymentService::AuthorisationResponse] The response object which holds the
     #                                                 authorisation status.
-    def authorise_one_click_payment(reference, amount, shopper, card_cvc, recurring_detail_reference, fraud_offset = nil)
+    def authorise_one_click_payment(reference, amount, shopper, card, recurring_detail_reference, fraud_offset = nil, instant_capture = false)
       params = { :reference => reference,
                  :amount    => amount,
                  :shopper   => shopper,
-                 :card      => { :cvc => card_cvc },
+                 :card      => card,
                  :recurring_detail_reference => recurring_detail_reference,
-                 :fraud_offset => fraud_offset }
+                 :fraud_offset => fraud_offset,
+                 :instant_capture => instant_capture }
       PaymentService.new(params).authorise_one_click_payment
     end
 

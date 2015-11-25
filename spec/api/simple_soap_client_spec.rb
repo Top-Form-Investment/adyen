@@ -48,7 +48,7 @@ describe Adyen::API::SimpleSOAPClient do
     end
 
     it "makes a request over SSL" do
-      @request.use_ssl?.should be_true
+      @request.use_ssl?.should be true
     end
 
     it "verifies certificates" do
@@ -73,7 +73,7 @@ describe Adyen::API::SimpleSOAPClient do
 
     it "returns an Adyen::API::Response instance" do
       @response.should be_instance_of(Adyen::API::Response)
-      @response.xml_querier.to_s.should == AUTHORISE_RESPONSE
+      @response.xml_querier.to_s.rstrip.should == AUTHORISE_RESPONSE.rstrip
     end
 
     [

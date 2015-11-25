@@ -23,14 +23,25 @@ shared_examples_for "payment requests" do
     text('./payment:shopperIP').should == '61.294.12.12'
     text('./payment:shopperStatement').should == 'invoice number 123456'
   end
-  
+
   it "includes the fraud offset" do
     text('./payment:fraudOffset').should == '30'
   end
-  
+
   it "does not include the fraud offset if none is given" do
     @payment.params.delete(:fraud_offset)
     xpath('./payment:fraudOffset').should be_empty
+  end
+
+  it "includes the given amount of `installments'" do
+    xpath('./payment:installments') do |amount|
+      amount.text('./common:value').should == '6'
+    end
+  end
+
+  it "does not include the installments amount if none is given" do
+    @payment.params.delete(:installments)
+    xpath('./payment:installments').should be_empty
   end
 
   it "only includes shopper details for given parameters" do
@@ -95,6 +106,9 @@ describe Adyen::API::PaymentService do
         #:start_month => ,
         #:start_year => ,
       },
+      :installments => {
+        :value => 6
+      },
       :recurring_detail_reference => 'RecurringDetailReference1',
       :fraud_offset => 30
     }
@@ -107,13 +121,13 @@ describe Adyen::API::PaymentService do
     it_should_validate_request_parameters :merchant_account,
                                           :reference,
                                           :amount => [:currency, :value],
-                                          :card => [:holder_name, :number, :cvc, :expiry_year, :expiry_month]
+                                          :card => [:holder_name, :number, :expiry_year, :expiry_month]
 
     it_should_validate_request_param(:shopper) do
       @payment.params[:recurring] = true
       @payment.params[:shopper] = nil
     end
-    
+
     it_should_validate_request_param(:fraud_offset) do
       @payment.params[:fraud_offset] = ''
     end
@@ -128,7 +142,7 @@ describe Adyen::API::PaymentService do
     it "includes the creditcard details" do
       xpath('./payment:card') do |card|
         # there's no reason why Nokogiri should escape these characters, but as long as they're correct
-        card.text('./payment:holderName').should == 'Simon &#x308F;&#x304F;&#x308F;&#x304F; Hopper'
+        card.text('./payment:holderName').should == 'Simon わくわく Hopper'
         card.text('./payment:number').should == '4444333322221111'
         card.text('./payment:cvc').should == '737'
         card.text('./payment:expiryMonth').should == '12'
@@ -148,11 +162,40 @@ describe Adyen::API::PaymentService do
     end
   end
 
+  describe_response_from :generate_billet, BILLET_RECEIVED_RESPONSE do
+    it_should_return_params_for_each_xml_backend({
+      :psp_reference => "8814038837489129",
+      :result_code => "Received",
+      :billet_url => "https://test.adyen.com/hpp/generationBoleto.shtml?data=AgABAQBdYDe9OqdseA79Rfexm2Lz8fRQ1bWqkLhBCf1fHhQEif7bsRKi0otq%2B1ekMAdMIZUiVXeR3QFrAOA8Zy4tpiNLhkMq6f7W2zFqYhVWrByqxQnbQTYuX2FWI7tsu7Vb0MnyOvFfFdFtaxzImZYCli%2BMrqaAJ5HI9ap3egeqBQIsRI%2Fj0zWsu2EGN16lGbwFOLyxl%2By0Pc5jazTo8rnBA7OVPGDIu7Qt%2F2DYIMcB6PXou5W3aJoTC4SldhNdobVqgWUtES8NsWdOYbLGa6I%2BjSwEFXvxyTXwtw4J2E%2BE7ux1UhBiZRj66lMbcvaYlfnR2xWbA%2BKmdLrVvuXTroEHKQ%2B1C%2FuyGuiOk3SmGq6TMgOyCEt%2BmG%2Bq6z5jDi%2BnYLtlLQU4ccMOujgWMfGkViC%2FXDUlqYjKbn8NHwPwoPcelpf1zCDCe%2Fvu6NBTVQbEXbE0oV0j2MT1tLlMdf08iUsDThuQ3MlJbE8VbTMlttOFqoyXhBjepQ42C1eXfswSz1gsZlHanBCTiw1pB69vkvfWPf5IdUSx1cpEr9LJ9PSz%2FeHxEhq%2B8ZdWzrybXqRbEl2mUjLeyhMNuiE%3D"
+    })
+
+    describe "with a received billet" do
+      it "returns that the request was successful" do
+        @response.should be_success
+      end
+    end
+  end
+
+  describe_response_from :generate_billet, BILLET_REFUSED_RESPONSE do
+    it_should_return_params_for_each_xml_backend({
+      :psp_reference => "8514038928235061",
+      :result_code => "Refused",
+      :billet_url => ""
+    })
+
+    describe "with a received billet" do
+      it "returns that the request was successful" do
+        @response.should_not be_success
+      end
+    end
+  end
+
   describe_response_from :authorise_payment, AUTHORISE_RESPONSE do
     it_should_return_params_for_each_xml_backend({
       :psp_reference => '9876543210987654',
       :result_code => 'Authorised',
       :auth_code => '1234',
+      :additional_data => { "cardSummary" => "1111" },
       :refusal_reason => ''
     })
 
@@ -226,8 +269,9 @@ describe Adyen::API::PaymentService do
 
       it "prepends the error attribute with the given prefix, except for :base" do
         [
-          ["validation 101 Invalid card number", [:card_number, 'is not a valid creditcard number']],
-          ["validation 130 Reference Missing",   [:base,        "validation 130 Reference Missing"]],
+          ["validation 101 Invalid card number",            [:card_number, 'is not a valid creditcard number']],
+          ["validation 130 Reference Missing",              [:base,        "validation 130 Reference Missing"]],
+          ["validation 152 Invalid number of installments", [:base,        "validation 152 Invalid number of installments"]],
         ].each do |message, error|
           response_with_fault_message(message).error(:card).should == error
         end
@@ -274,6 +318,7 @@ describe Adyen::API::PaymentService do
       :psp_reference => '9876543210987654',
       :result_code => 'Authorised',
       :auth_code => '1234',
+      :additional_data => { "cardSummary" => "1111" },
       :refusal_reason => ''
     })
   end
@@ -314,6 +359,7 @@ describe Adyen::API::PaymentService do
       :psp_reference => '9876543210987654',
       :result_code => 'Authorised',
       :auth_code => '1234',
+      :additional_data => { "cardSummary" => "1111" },
       :refusal_reason => ''
     })
   end
